@@ -1,0 +1,165 @@
+---
+title: "Daily Electricity Demand in Victoria Australia"
+author: "Lorena Dorado"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import Libraries
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(fpp3)
+library(here)
+library(plotly)
+library(dplyr)
+library(lubridate)
+```
+
+
+## Data Source
+
+This dataset was downloaded from Kaggle and is available at https://www.kaggle.com/datasets/aramacus/electricity-demand-in-victoria-australia. Victoria is the second largest state in Australia with a population of 6.7 million in 2020, with 5 million residing in Melbourne, the state capital. The state implemented strict pandemic-related restrictions in response to COVID-19, leading to a significant number of residents working from home. The dataset covers 2016 days from January 1, 2015, to October 6, 2020, and includes instances where the Regional Reference Price (RRP) became negative, indicating that energy producers were paying consumers instead.
+
+## Importing the Data
+
+Downloaded files are in the ADS_datasets repo of https://github.com/renaqd/ADS_datasets 
+
+
+## Load Data
+```{r}
+# Read data
+url <- "https://github.com/renaqd/ADS_datasets/raw/main/complete_dataset.csv"
+data <- read.csv(url, header = TRUE)
+
+str(data)
+```
+There are 2,106 observations for the approximate five months.
+
+## Summary
+```{r}
+# Convert date to proper Date format and create basic summary
+data$date <- as.Date(data$date)
+demand_summary <- summary(data$demand)
+cat("Summary Statistics for Daily Electricity Demand:\n")
+print(demand_summary)
+```
+## Time Series Characteristics
+```{r}
+# Calculate time series characteristics
+ts_characteristics <- data.frame(
+  Metric = c("Number of Observations",
+             "Time Range",
+             "Frequency",
+             "Missing Values"),
+  Value = c(
+    length(data$demand),
+    paste(min(data$date), "to", max(data$date)),
+    "Daily",
+    sum(is.na(data$demand))
+  )
+)
+print(ts_characteristics)
+```
+
+
+## Time Series Plot
+
+Suppress seasonality by aggregating daily data into monthly averages before plotting the series.
+```{r}
+# Aggregate daily data to monthly averages
+monthly_data <- data %>%
+    mutate(month = as.Date(format(date, "%Y-%m-01"))) %>%  # Extract the month as a date
+    group_by(month) %>%
+    summarize(avg_demand = mean(demand, na.rm = TRUE))
+
+# Plot the aggregated monthly data
+ggplot(monthly_data, aes(x = month, y = avg_demand)) +
+    geom_line(color = "steelblue", alpha = 0.7) +
+    geom_smooth(method = "loess", color = "red", se = FALSE) +
+    labs(title = "Monthly Average Electricity Demand in Victoria (2015-2020)",
+         x = "Month",
+         y = "Average Demand (MWh)") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12))
+```
+*This chart visualizes the monthly electricity demand in Victoria, Australia, from 2015 to 2020, with the primary aim of showing both the monthly demand fluctuations and the overall trend. The blue line represents the monthly demand data points, providing insight into seasonal variations, while the red trend line (LOESS smooth) captures the broader demand trajectory over time. This combination helps highlight significant changes in demand patterns and any long-term shifts, particularly around events such as the COVID-19 pandemic.*
+
+
+
+## Monthly Demand
+```{r}
+# Seasonal components
+data$year <- year(data$date)
+data$month <- month(data$date)
+data$day_of_week <- wday(data$date, label = TRUE)
+
+# Monthly pattern visualization
+monthly_avg <- data |>
+  group_by(month) |>
+  summarize(avg_demand = mean(demand))
+
+ggplot(monthly_avg, aes(x = factor(month), y = avg_demand)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Monthly Electricity Demand",
+       x = "Month",
+       y = "Average Demand (MWh)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+*We can see that the winter months of Australia (June, July, August) show higher electricity demands.*
+
+## Day of week pattern
+```{r}
+# Daily components
+daily_avg <- data |>
+  group_by(day_of_week) |>
+  summarize(avg_demand = mean(demand))
+
+ggplot(daily_avg, aes(x = day_of_week, y = avg_demand)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Daily Electricity Demand by Day of Week",
+       x = "Day of Week",
+       y = "Average Demand (MWh)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+*Weekdays show higher electricity demands.*
+
+
+## Seasonal and Trend Decomposition using Loess
+
+```{r}
+# Aggregate daily data to monthly averages
+monthly_data <- data |>
+  mutate(date = as.Date(date),
+         month = yearmonth(date)) |>  # Extract the year-month component
+  group_by(month) |>
+  summarize(value = mean(demand, na.rm = TRUE)) |>
+  ungroup() |>
+  as_tsibble(index = month)  # Create a tsibble indexed by month
+# Perform STL decomposition on the monthly data
+monthly_data |>
+  model(
+    stl = STL(value)
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "STL Decomposition of Monthly Average Electricity Demand",
+       subtitle = "Victoria, Australia") +
+  theme_minimal()
+```
+
+*According to the plot, the trend shows a long term decrease in electricity demand.*
+
+## Discussion
+The data clearly shows monthly seasonality with a long-term decreasing trend in electricity demand. Winter months exhibit higher electricity demand, though demand tends to decrease on weekends. Other factors, such as weather conditions, are worth investigating to further understand these trends.
+
+With several years of historical data, we can also observe annual seasonal patterns. This allows organizations to predict fluctuations in demand, optimizing resource allocation, staffing, and supply management. Electricity producers can plan accordingly with these known patterns, efficiently coordinating production and maintenance, and appropriately strategizing pricing. These measures can lead to improved service reliability during high-demand months, ultimately satisfying consumers.
