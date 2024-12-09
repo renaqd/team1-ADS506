@@ -1,0 +1,482 @@
+---
+title: "Daily Electricity Demand in Victoria Australia"
+author: "Lorena Dorado, Nolan Peters, Tysir Shehadey"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Import Libraries
+
+```{r warning=FALSE, message=FALSE}
+library(tidyverse)
+library(fpp3)
+# library(here)
+# library(plotly)
+# library(dplyr)
+library(lubridate)
+library(gt)
+```
+
+## Data Source
+
+This dataset was downloaded from Kaggle and is available at <https://www.kaggle.com/datasets/aramacus/electricity-demand-in-victoria-australia.> Victoria is the second largest state in Australia with a population of 6.7 million in 2020, with 5 million residing in Melbourne, the state capital. The state implemented strict pandemic-related restrictions in response to COVID-19, leading to a significant number of residents working from home. The dataset covers 2016 days from January 1, 2015, to October 6, 2020, and includes instances where the Regional Reference Price (RRP) became negative, indicating that energy producers were paying consumers instead.
+
+## Importing the Data
+
+Downloaded files are in the ADS_datasets repo of <https://github.com/renaqd/ADS_datasets>
+
+## Load Data
+
+```{r}
+# Read data
+url <- "https://github.com/renaqd/ADS_datasets/raw/main/complete_dataset.csv"
+data <- read.csv(url, header = TRUE)
+```
+
+There are 2,106 observations for the approximate five months.
+
+## Summary
+
+```{r}
+# Convert date to proper Date format and create basic summary
+data$date <- as.Date(data$date)
+demand_summary <- summary(data$demand)
+cat("Summary Statistics for Daily Electricity Demand:\n")
+print(demand_summary)
+```
+
+## Time Series Characteristics
+
+```{r}
+# Calculate time series characteristics
+ts_characteristics <- data.frame(
+  Metric = c("Number of Observations",
+             "Time Range",
+             "Frequency",
+             "Missing Values"),
+  Value = c(
+    length(data$demand),
+    paste(min(data$date), "to", max(data$date)),
+    "Daily",
+    sum(is.na(data$demand))
+  )
+)
+print(ts_characteristics)
+```
+
+## Time Series Plot
+
+Suppress seasonality by aggregating daily data into monthly averages before plotting the series.
+
+```{r}
+# Aggregate daily data to monthly averages
+monthly_data <- data %>%
+    mutate(month = as.Date(format(date, "%Y-%m-01"))) %>%  # Extract the month as a date
+    group_by(month) %>%
+    summarize(avg_demand = mean(demand, na.rm = TRUE))
+
+# Plot the aggregated monthly data
+ggplot(monthly_data, aes(x = month, y = avg_demand)) +
+    geom_line(color = "steelblue", alpha = 0.7) +
+    geom_smooth(method = "loess", color = "red", se = FALSE) +
+    labs(title = "Monthly Average Electricity Demand in Victoria (2015-2020)",
+         x = "Month",
+         y = "Average Demand (MWh)") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12))
+```
+
+*This chart visualizes the monthly electricity demand in Victoria, Australia, from 2015 to 2020, with the primary aim of showing both the monthly demand fluctuations and the overall trend. The blue line represents the monthly demand data points, providing insight into seasonal variations, while the red trend line (LOESS smooth) captures the broader demand trajectory over time. This combination helps highlight significant changes in demand patterns and any long-term shifts, particularly around events such as the COVID-19 pandemic.*
+
+## Monthly Demand
+
+```{r}
+# Seasonal components
+data$year <- year(data$date)
+data$month <- month(data$date)
+data$day_of_week <- wday(data$date, label = TRUE)
+
+# Monthly pattern visualization
+monthly_avg <- data |>
+  group_by(month) |>
+  summarize(avg_demand = mean(demand))
+
+ggplot(monthly_avg, aes(x = factor(month), y = avg_demand)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Monthly Electricity Demand",
+       x = "Month",
+       y = "Average Demand (MWh)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+*We can see that the winter months of Australia (June, July, August) show higher electricity demands.*
+
+## Day of week pattern
+
+```{r}
+# Daily components
+daily_avg <- data |>
+  group_by(day_of_week) |>
+  summarize(avg_demand = mean(demand))
+
+ggplot(daily_avg, aes(x = day_of_week, y = avg_demand)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Daily Electricity Demand by Day of Week",
+       x = "Day of Week",
+       y = "Average Demand (MWh)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+*Weekdays show higher electricity demands.*
+
+## Seasonal and Trend Decomposition using Loess
+
+```{r}
+# Aggregate daily data to monthly averages
+monthly_data <- data |>
+  mutate(date = as.Date(date),
+         month = yearmonth(date)) |>  # Extract the year-month component
+  group_by(month) |>
+  summarize(value = mean(demand, na.rm = TRUE)) |>
+  ungroup() |>
+  as_tsibble(index = month)  # Create a tsibble indexed by month
+# Perform STL decomposition on the monthly data
+monthly_data |>
+  model(
+    stl = STL(value)
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "STL Decomposition of Monthly Average Electricity Demand",
+       subtitle = "Victoria, Australia") +
+  theme_minimal()
+```
+
+*According to the plot, the trend shows a long term decrease in electricity demand.*
+```{r}
+# aggregate by week and summarize by mean
+weekly_data1 <- data |>
+  as_tsibble(index = date) |>
+  index_by(week = yearweek(date)) |>
+  summarize(
+    avg_wk_demand = mean(demand, na.rm = TRUE),
+    avg_wk_solar_exposure = mean(solar_exposure, na.rm = TRUE),
+    avg_wk_rainfall = mean(rainfall, na.rm = TRUE),
+    avg_wk_min_temp = mean(min_temperature, na.rm = TRUE),
+    avg_wk_max_temp = mean(max_temperature, na.rm = TRUE),
+    avg_wk_RRP = mean(RRP, na.rm = TRUE),
+    avg_wk_demand_pos_RRP = mean(demand_pos_RRP, na.rm = TRUE),
+    avg_wk_RRP_positive = mean(RRP_positive, na.rm = TRUE),
+    avg_wk_demand_neg_RRP = mean(demand_neg_RRP, na.rm = TRUE),
+    avg_wk_RRP_negative = mean(RRP_negative, na.rm = TRUE),
+    avg_wk_frac_neg_RRP = mean(frac_at_neg_RRP, na.rm = TRUE),
+    # For categorical variables, calculate the proportion
+    prop_school_days = mean(school_day == "Y", na.rm = TRUE),
+    prop_holidays = mean(holiday == "Y", na.rm = TRUE)
+  )
+```
+
+
+Time plots of numerical series and scatter plots od the weekly series.
+```{r}
+# Time series plots with relevant external variables
+weekly_data1 |>
+  select(
+    week,
+    avg_wk_demand,
+    avg_wk_solar_exposure,
+    avg_wk_rainfall,
+    avg_wk_min_temp,
+    avg_wk_max_temp,
+    avg_wk_RRP
+  ) |>
+  pivot_longer(
+    cols = -week,
+    names_to = "Variable",
+    values_to = "Value"
+  ) |>
+  ggplot(aes(x = week, y = Value)) +
+  geom_line() +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 1) +
+  theme_minimal() +
+  labs(
+    x = "Week",
+    y = "Value",
+    title = "Weekly Averages of Key Variables"
+  )
+```
+External Variables
+```{r}
+weekly_data1 |> 
+  as_tibble() |> 
+  select(
+    week,
+    avg_wk_demand,
+    avg_wk_solar_exposure,
+    avg_wk_rainfall,
+    avg_wk_min_temp,
+    avg_wk_max_temp
+  ) |> 
+  pivot_longer(
+    cols = -c(week, avg_wk_demand),
+    names_to = "Variable",
+    values_to = "Value"
+  ) |> 
+  ggplot(aes(x = Value, y = avg_wk_demand)) +
+  geom_point(alpha = 0.7) +
+  geom_smooth(method = "lm", formula = y ~ x, se = FALSE, color = "blue") +
+  facet_wrap(~ Variable, scales = "free_x", nrow = 3) +  # Use two rows
+  theme_minimal() +
+  theme(
+    strip.text = element_text(size = 12),
+    axis.text = element_text(size = 10),
+    panel.spacing = unit(1.5, "lines")
+  ) +
+  labs(
+    x = "Value of Variable",
+    y = "Weekly Demand",
+    title = "Scatter Plots of Weekly Demand vs. Other Variables"
+  )
+```
+
+
+```{r}
+# Perform STL decomposition on the daily data
+data |>
+  select(date, demand) |> 
+  tsibble(index = date) |> 
+  model(
+    stl = STL(demand)
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "STL Decomposition of Daily Average Electricity Demand",
+       subtitle = "Victoria, Australia") +
+  theme_minimal()
+```
+
+## Discussion
+
+The data clearly shows monthly seasonality with a long-term decreasing trend in electricity demand. Winter months exhibit higher electricity demand, though demand tends to decrease on weekends. Other factors, such as weather conditions, are worth investigating to further understand these trends.
+
+With several years of historical data, we can also observe annual seasonal patterns. This allows organizations to predict fluctuations in demand, optimizing resource allocation, staffing, and supply management. Electricity producers can plan accordingly with these known patterns, efficiently coordinating production and maintenance, and appropriately strategizing pricing. These measures can lead to improved service reliability during high-demand months, ultimately satisfying consumers.
+
+### Model Overview
+
+First we will aggregate the day by week to introduce simple models and reduce noise. From these modesl we will will identify the best models by RMSE on the training and test sets. Next, we will define daily models to capture the daily patterns often found in electricity data and futher proved by our previous analysis. For both models we will include solar exposure and rainfall as additional features in the modeling stateges given their connection to the
+
+#### Weekly Models
+
+```{r}
+# aggregate by week and summarize by mean
+weekly_data <- data |>
+  as_tsibble(index = date) |>
+  index_by(week = yearweek(date)) |>
+  summarize(avg_wk_demand = mean(demand, na.rm = TRUE),
+            avg_wk_solar_exposure = mean(solar_exposure, na.rm = TRUE),
+            avg_wk_rainfall = mean(rainfall, na.rm = TRUE))
+
+# train data
+week_trn <- weekly_data |>
+  filter(week < yearweek("2020 W01"))
+
+# test data
+week_tst <- weekly_data |>
+  filter(week >= yearweek("2020 W01"))
+```
+
+```{r}
+week_trn |> 
+    gg_tsdisplay(y = avg_wk_demand, plot_type = 'partial')
+```
+
+```{r}
+# Weekly Model
+wk_model_fit <- week_trn |>
+    model(
+      SNaive = SNAIVE(avg_wk_demand),
+      tslm_trend_season = TSLM(avg_wk_demand ~ trend() + season()),
+      auto_arima = ARIMA(avg_wk_demand),
+      auto_arima_ext = ARIMA(avg_wk_demand ~ avg_wk_solar_exposure + avg_wk_rainfall),
+      auto_arima_seasonal = ARIMA(avg_wk_demand ~ PDQ(period = 52))
+    )
+
+week_tst_reg <- week_tst |> 
+  select(avg_wk_solar_exposure, avg_wk_rainfall)
+
+wk_fc <- wk_model_fit |> 
+  forecast(new_data = week_tst_reg)
+
+wk_model_fit |>
+    accuracy() |>
+    select(.model, RMSE) |>
+    mutate(RMSE = round(RMSE, 0))
+```
+
+```{r}
+autoplot(wk_fc, size = 2) +
+  autolayer(week_tst, avg_wk_demand, alpha = .3) +
+  labs(title = "Weekly Energy Demand Forecast") +
+  facet_wrap(. ~ .model, ncol = 2) +
+  guides(color = "none", fill = "none")
+```
+
+```{r}
+week_tst_fc <- week_tst |> 
+  select(week, avg_wk_demand)
+
+accuracy(wk_fc, week_tst_fc) |>
+  select(.model, RMSE) |>
+  mutate(RMSE = round(RMSE, 0)) |> 
+  gt() |> 
+  tab_header(title = "Weekly Models (Validation)")
+```
+
+```{r}
+wk_fc_best <- wk_fc |> 
+  filter(.model == 'tslm_trend_season')
+
+autoplot(wk_fc_best, size = 1) +
+  autolayer(week_tst, avg_wk_demand, alpha = .3) +
+  labs(title = "Weekly Energy Demand Forecast", subtitle = "TSLM | Annual Forecast") +
+  labs(x = "Week", y = "Energy Demand (MWh)") +
+  ylim(0, 140000)
+```
+
+#### Daily Models
+
+```{r}
+# get daily data
+daily_data <- data |>
+  as_tsibble(index = date) |> 
+  select(date, demand, solar_exposure, rainfall)
+
+# train data
+daily_trn <- daily_data |>
+  filter(date < ymd("2020-09-23"))
+
+# test data
+daily_tst <- daily_data |>
+  filter(date >= ymd("2020-09-23"))
+```
+
+```{r}
+# Daily Model
+d_model_fit <- daily_trn |>
+    model(
+      SNaive = SNAIVE(demand),
+      tslm_trend_season = TSLM(demand ~ trend() + season()),
+      auto_arima = ARIMA(demand),
+      auto_arima_ext = ARIMA(demand ~ solar_exposure + rainfall),
+      auto_arima_seasonal = ARIMA(demand ~ PDQ(period = 7))
+    )
+
+d_tst_reg <- daily_tst |> 
+  select(solar_exposure, rainfall)
+
+d_fc <- d_model_fit |> 
+  forecast(new_data = d_tst_reg)
+
+d_model_fit |>
+  accuracy() |>
+  select(.model, RMSE) |>
+  mutate(RMSE = round(RMSE, 2)) |> 
+  gt() |> 
+  tab_header(title = "Daily Models")
+```
+
+```{r}
+# best daily model
+d_fc_best <- d_fc |> 
+  filter(.model == 'auto_arima_seasonal')
+
+autoplot(d_fc_best, size = 1) +
+  autolayer(daily_tst, demand, alpha = .3) +
+  labs(title = "Daily Energy Demand Forecast", subtitle = "ARIMA | 2 Week Forecast") +
+  labs(x = "Day", y = "Energy Demand (MWh)") +
+  ylim(0, 140000)
+```
+
+```{r}
+autoplot(d_fc, size = 2) +
+  autolayer(daily_tst, demand, alpha = .3) +
+  labs(title = "Daily Energy Demand Forecast") +
+  facet_wrap(. ~ .model, ncol = 2) +
+  guides(color = "none", fill = "none")
+```
+
+```{r}
+d_tst_fc <- daily_tst |> 
+  select(date, demand)
+
+accuracy(d_fc, daily_tst) |>
+  select(.model, RMSE) |>
+  mutate(RMSE = round(RMSE, 0)) |> gt() |> 
+  tab_header(title = "Daily Models (Validation)")
+```
+
+#### Split Season Model
+
+```{r}
+# add column for season
+daily_data_ss <- daily_data |>
+  mutate(month = month(date),
+         season_group = case_when(
+           month %in% c(3, 4, 5, 6, 7, 8) ~ "Fall/Winter",
+           month %in% c(9, 10, 11, 12, 1, 2) ~ "Spring/Summer"
+         ))
+
+# get subsets based on season
+fall_winter_data <- daily_data_ss |> filter(season_group == "Fall/Winter")
+spring_summer_data <- daily_data_ss |> filter(season_group == "Spring/Summer")
+
+# train test split 
+daily_trn_fw <- fall_winter_data |> filter(year(date) < 2020) |> 
+  as_tsibble(index = date) |> 
+  fill_gaps() 
+
+daily_tst_fw <- fall_winter_data |> filter(year(date) == 2020) |> 
+  as_tsibble(index = date) |> 
+  fill_gaps() 
+
+daily_trn_ss <- spring_summer_data |> filter(year(date) < 2020) |> 
+  as_tsibble(index = date) |> 
+  fill_gaps() 
+
+daily_tst_ss <- spring_summer_data |> filter(year(date) == 2020) |> 
+  as_tsibble(index = date) |> 
+  fill_gaps() 
+
+# ss daily model
+d_ss_model_fit <- daily_trn_ss |>
+    model(
+      SNaive = SNAIVE(demand),
+      tslm_trend_season = TSLM(demand ~ trend() + season()),
+      auto_arima = ARIMA(demand),
+      auto_arima_ext = ARIMA(demand ~ solar_exposure + rainfall),
+      auto_arima_seasonal = ARIMA(demand ~ PDQ(period = 7))
+    )
+
+d_tst_reg_ss <- daily_tst_ss |> 
+  select(date, solar_exposure, rainfall)
+
+d_fc_ss <- d_ss_model_fit |> 
+  forecast(new_data = d_tst_reg_ss)
+
+d_ss_model_fit |>
+  accuracy() |>
+  select(.model, RMSE) |>
+  mutate(RMSE = round(RMSE, 0)) |> 
+  gt() |> 
+  tab_header(title = "Daily Models (S/S, Training)")
+```
