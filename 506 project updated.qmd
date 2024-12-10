@@ -1,0 +1,235 @@
+---
+title: "ADS 506 Project New"
+format: html
+editor: visual
+---
+
+```{r}
+suppressWarnings(library(tidyverse))
+suppressWarnings(library(fpp3))    
+suppressWarnings(library(here))  
+suppressWarnings(library(plotly))    
+suppressWarnings(library(dplyr))
+suppressWarnings(library(lubridate))
+suppressWarnings(library(gt))
+```
+
+```{r}
+# Read data
+url <- "https://github.com/renaqd/ADS_datasets/raw/main/complete_dataset.csv"
+data <- read.csv(url, header = TRUE)
+
+str(data)
+```
+
+```{r}
+# Convert date to proper Date format and create basic summary
+data$date <- as.Date(data$date)
+demand_summary <- summary(data$demand)
+cat("Summary Statistics for Daily Electricity Demand:\n")
+print(demand_summary)
+```
+
+```{r}
+# Calculate time series characteristics
+ts_characteristics <- data.frame(
+  Metric = c("Number of Observations",
+             "Time Range",
+             "Frequency",
+             "Missing Values"),
+  Value = c(
+    length(data$demand),
+    paste(min(data$date), "to", max(data$date)),
+    "Daily",
+    sum(is.na(data$demand))))
+print(ts_characteristics)
+```
+
+```{r}
+# Aggregate daily data to monthly averages
+monthly_data <- data %>%
+    mutate(month = as.Date(format(date, "%Y-%m-01"))) %>%  # Extract the month as a date
+    group_by(month) %>%
+    summarize(avg_demand = mean(demand, na.rm = TRUE))
+
+# Plot the aggregated monthly data
+ggplot(monthly_data, aes(x = month, y = avg_demand)) +
+    geom_line(color = "steelblue", alpha = 0.7) +
+    geom_smooth(method = "loess", color = "red", se = FALSE) +
+    labs(title = "Monthly Average Electricity Demand in Victoria (2015-2020)",
+         x = "Month",
+         y = "Average Demand (MWh)") +
+    theme_minimal() +
+    theme(plot.title = element_text(hjust = 0.5),
+          axis.text = element_text(size = 10),
+          axis.title = element_text(size = 12))
+```
+
+```{r}
+# Seasonal components
+data$year <- year(data$date)
+data$month <- month(data$date)
+data$day_of_week <- wday(data$date, label = TRUE)
+
+# Monthly pattern visualization
+monthly_avg <- data |>
+  group_by(month) |>
+  summarize(avg_demand = mean(demand))
+
+ggplot(monthly_avg, aes(x = factor(month), y = avg_demand)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Monthly Electricity Demand",
+       x = "Month",
+       y = "Average Demand (MWh)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+# Daily components
+daily_avg <- data |>
+  group_by(day_of_week) |>
+  summarize(avg_demand = mean(demand))
+
+ggplot(daily_avg, aes(x = day_of_week, y = avg_demand)) +
+  geom_bar(stat = "identity", fill = "steelblue") +
+  labs(title = "Average Daily Electricity Demand by Day of Week",
+       x = "Day of Week",
+       y = "Average Demand (MWh)") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+ggplot(data, aes(x = holiday, y = demand)) +
+  geom_boxplot(fill = "lightblue") +
+  labs(title = "Demand Distribution by Holiday", x = "Holiday", y = "Demand") +
+  theme_minimal()
+```
+
+```{r}
+ggplot(data, aes(x = school_day, y = demand)) +
+  geom_boxplot(fill = "lightgreen") +
+  labs(title = "Demand Distribution by School Day", x = "School Day", y = "Demand") +
+  theme_minimal()
+```
+
+```{r}
+# Aggregate daily data to monthly averages
+monthly_data <- data |>
+  mutate(date = as.Date(date),
+         month = yearmonth(date)) |>  # Extract the year-month component
+  group_by(month) |>
+  summarize(value = mean(demand, na.rm = TRUE)) |>
+  ungroup() |>
+  as_tsibble(index = month)  # Create a tsibble indexed by month
+# Perform STL decomposition on the monthly data
+monthly_data |>
+  model(
+    stl = STL(value)
+  ) |>
+  components() |>
+  autoplot() +
+  labs(title = "STL Decomposition of Monthly Average Electricity Demand",
+       subtitle = "Victoria, Australia") +
+  theme_minimal()
+```
+
+```{r}
+# aggregate by week and summarize by mean
+weekly_data <- data |>
+  as_tsibble(index = date) |>
+  index_by(week = yearweek(date)) |>
+  summarize(avg_wk_demand = mean(demand, na.rm = TRUE),
+            avg_wk_solar_exposure = mean(solar_exposure, na.rm = TRUE),
+            avg_wk_rainfall = mean(rainfall, na.rm = TRUE))
+
+# train data
+week_trn <- weekly_data |>
+  filter(week < yearweek("2020 W01"))
+
+# test data
+week_tst <- weekly_data |>
+  filter(week >= yearweek("2020 W01"))
+```
+
+```{r}
+week_trn |> 
+    gg_tsdisplay(y = avg_wk_demand, plot_type = 'partial')
+```
+
+```{r}
+# Model 1
+fit1 <- week_trn |>
+    model(
+      SNaive = SNAIVE(avg_wk_demand),
+      tslm_trend_season = TSLM(avg_wk_demand ~ trend() + season()),
+      auto_arima = ARIMA(avg_wk_demand),
+      auto_arima_ext = ARIMA(avg_wk_demand ~ avg_wk_solar_exposure + avg_wk_rainfall),
+      auto_arima_seasonal = ARIMA(avg_wk_demand ~ PDQ(period = 52))
+    )
+
+# Fixed object name in accuracy calculation (fit to fit1)
+fit1 |>
+    accuracy() |>
+    select(.model, RMSE) |>
+    mutate(RMSE = round(RMSE, 0)) |>
+    gt::gt()
+```
+
+SNAIVE MODEL
+
+```{r}
+snaive_model <- week_trn |>
+  model(SNaive = SNAIVE(avg_wk_demand))
+
+forecasts <- snaive_model |>
+  forecast(h = nrow(week_tst))
+```
+
+```{r}
+forecasts |>
+  autoplot(weekly_data) +
+  labs(title = "SNaive Model Weekly Forecast",
+       x = "Week",
+       y = "Average Weekly Demand (MWh)") +
+  theme_minimal() +
+  scale_x_yearweek(breaks = weekly_data$week[seq(1, nrow(weekly_data), by = 52)]) +
+  scale_y_continuous(breaks = seq(100000, 160000, by = 5000))
+```
+
+```{r}
+# Apply seasonal differencing for the SNaive model
+snaive_data <- data |>
+  as_tsibble(index = date) |>
+  index_by(week = yearweek(date)) |>
+  summarize(avg_wk_demand = mean(demand, na.rm = TRUE)) |>
+  mutate(avg_wk_demand_diff = difference(avg_wk_demand, lag = 52))
+
+snaive_trn <- snaive_data |>
+  filter(week < yearweek("2020 W01")) |>
+  drop_na()
+
+snaive_tst <- snaive_data |>
+  filter(week >= yearweek("2020 W01")) |>
+  drop_na()
+
+# Fit the SNaive model on the differenced data
+snaive_model_diff <- snaive_trn |>
+  model(SNaive = SNAIVE(avg_wk_demand_diff))
+
+forecasts_diff <- snaive_model_diff |>
+  forecast(h = nrow(snaive_tst))
+
+# Plot the differenced forecasts
+forecasts_diff |>
+  autoplot(snaive_data) +
+  labs(
+    title = "SNaive Model Forecast with Seasonal Differencing",
+    x = "Week",
+    y = "Differenced Weekly Demand"
+  ) +
+  theme_minimal() +
+  scale_x_yearweek(breaks = weekly_data$week[seq(1, nrow(weekly_data), by = 52)]) +
+  scale_y_continuous(breaks = seq(100000, 160000, by = 5000))
+```
