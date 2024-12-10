@@ -1,5 +1,6 @@
 ---
-title: "Daily Electricity Demand in Victoria Australia"
+title: "Appendix"
+subtitle: "Daily Electricity Demand in Victoria Australia"
 author: "Lorena Dorado, Nolan Peters, Tysir Shehadey"
 date: "`r Sys.Date()`"
 output:
@@ -297,16 +298,17 @@ week_tst <- weekly_data |>
 
 ```{r}
 week_trn |> 
-    gg_tsdisplay(y = avg_wk_demand, plot_type = 'partial')
+    gg_tsdisplay(y = avg_wk_demand, plot_type = 'partial') +
+    labs(title = "ACF & PACF Plots")
 ```
 
-```{r}
+```{r, warning=FALSE, message=FALSE}
 # Weekly Model
 wk_model_fit <- week_trn |>
     model(
       SNaive = SNAIVE(avg_wk_demand),
       tslm_trend_season = TSLM(avg_wk_demand ~ trend() + season()),
-      auto_arima = ARIMA(avg_wk_demand),
+      # auto_arima = ARIMA(avg_wk_demand),
       auto_arima_ext = ARIMA(avg_wk_demand ~ avg_wk_solar_exposure + avg_wk_rainfall),
       auto_arima_seasonal = ARIMA(avg_wk_demand ~ PDQ(period = 52))
     )
@@ -319,8 +321,12 @@ wk_fc <- wk_model_fit |>
 
 wk_model_fit |>
     accuracy() |>
-    select(.model, RMSE) |>
-    mutate(RMSE = round(RMSE, 0))
+    select(.model, RMSE, MAE, MAPE) |>
+    # mutate(RMSE = round(RMSE, 0)) |>
+    gt::gt() |>
+    gt::fmt_number(
+      columns = !.model, decimals = 2
+    )
 ```
 
 ```{r}
@@ -336,10 +342,12 @@ week_tst_fc <- week_tst |>
   select(week, avg_wk_demand)
 
 accuracy(wk_fc, week_tst_fc) |>
-  select(.model, RMSE) |>
-  mutate(RMSE = round(RMSE, 0)) |> 
-  gt() |> 
-  tab_header(title = "Weekly Models (Validation)")
+  select(.model, RMSE, MAE, MAPE) |>
+    gt::gt() |>
+    gt::fmt_number(
+      columns = !.model, decimals = 2
+    ) |>
+    tab_header(title = "Weekly Models (Validation)")
 ```
 
 ```{r}
@@ -389,9 +397,12 @@ d_fc <- d_model_fit |>
 
 d_model_fit |>
   accuracy() |>
-  select(.model, RMSE) |>
-  mutate(RMSE = round(RMSE, 2)) |> 
-  gt() |> 
+  select(.model, RMSE, MAE, MAPE) |>
+  # mutate(RMSE = round(RMSE, 0)) |>
+  gt::gt() |>
+  gt::fmt_number(
+    columns = !.model, decimals = 2
+  ) |>
   tab_header(title = "Daily Models")
 ```
 
@@ -420,8 +431,12 @@ d_tst_fc <- daily_tst |>
   select(date, demand)
 
 accuracy(d_fc, daily_tst) |>
-  select(.model, RMSE) |>
-  mutate(RMSE = round(RMSE, 0)) |> gt() |> 
+  select(.model, RMSE, MAE, MAPE) |>
+  # mutate(RMSE = round(RMSE, 0)) |>
+  gt::gt() |>
+  gt::fmt_number(
+    columns = !.model, decimals = 2
+  ) |>
   tab_header(title = "Daily Models (Validation)")
 ```
 
@@ -475,8 +490,11 @@ d_fc_ss <- d_ss_model_fit |>
 
 d_ss_model_fit |>
   accuracy() |>
-  select(.model, RMSE) |>
-  mutate(RMSE = round(RMSE, 0)) |> 
-  gt() |> 
+  select(.model, RMSE, MAE, MAPE) |>
+  # mutate(RMSE = round(RMSE, 0)) |>
+  gt::gt() |>
+  gt::fmt_number(
+    columns = !.model, decimals = 2
+  ) |>
   tab_header(title = "Daily Models (S/S, Training)")
 ```
